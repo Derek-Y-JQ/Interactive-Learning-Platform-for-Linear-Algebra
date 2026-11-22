@@ -1,28 +1,41 @@
 import React, { useState } from 'react';
 import { Canvas2D, SvgArrow, SvgLabel, SvgPoint } from '../components/Canvas2D';
 import { Tex } from '../components/MathText';
-import { Figure, LabGrid, MathBox, MatrixInput, Note, Panel, Presets, Segmented, SliderField, Status, Swatch, Tasks, VectorInput, useLatch } from '../components/ui';
-import { computeRref, fmt, mulMat2Vec, nullspaceBasis, type Mat2, type Vec2 } from '../utils/math';
+import { Figure, LabGrid, MathBox, Note, Panel, Presets, Segmented, SliderField, Status, Swatch, Tasks, VectorInput, useLatch } from '../components/ui';
+import { computeRref, fmt, nullspaceBasis, type Mat2, type Vec2 } from '../utils/math';
 import { C } from '../theme';
+
+const fmtLinearTerm = (a: number, b: number) => {
+  const parts: string[] = [];
+  if (Math.abs(a) > 1e-6) parts.push(Math.abs(a - 1) < 1e-6 ? 'x' : Math.abs(a + 1) < 1e-6 ? '-x' : `${fmt(a)}x`);
+  if (Math.abs(b) > 1e-6) {
+    const sign = parts.length > 0 ? (b > 0 ? ' + ' : ' - ') : b < 0 ? '-' : '';
+    const absB = Math.abs(b);
+    parts.push(`${sign}${Math.abs(absB - 1) < 1e-6 ? 'y' : `${fmt(absB)}y`}`);
+  }
+  return parts.length ? parts.join('') : '0';
+};
 
 export const Ch03KernelImageLab: React.FC = () => {
   const [tab, setTab] = useState<'kerim' | 'dual'>('kerim');
-  const [A, setA] = useState<Mat2>([
-    [1, 2],
-    [0.5, 1],
-  ]);
+  // Pure basis-image representation: φ(e₁) = w₁, φ(e₂) = w₂ (no matrix notation in Chapter 3!)
+  const [w1, setW1] = useState<Vec2>([1, 0.5]);
+  const [w2, setW2] = useState<Vec2>([2, 1]);
   const [x, setX] = useState<Vec2>([1.5, 0.5]);
   const [slide, setSlide] = useState(0);
   const [slid, setSlid] = useState(0);
   const [f, setF] = useState<Vec2>([1, 0.6]);
   const [v, setV] = useState<Vec2>([1.6, 1.2]);
 
-  const y = mulMat2Vec(A, x);
-  const { rank } = computeRref(A);
-  const nb = nullspaceBasis(A);
+  const y: Vec2 = [x[0] * w1[0] + x[1] * w2[0], x[0] * w1[1] + x[1] * w2[1]];
+  // Internal helper matrix only for computing rank/kernel (never shown as matrix to learner)
+  const internalMat: Mat2 = [
+    [w1[0], w2[0]],
+    [w1[1], w2[1]],
+  ];
+  const { rank } = computeRref(internalMat);
+  const nb = nullspaceBasis(internalMat);
   const k = nb[0] ? (nb[0].map((t) => t / Math.hypot(nb[0][0], nb[0][1])) as Vec2) : null;
-  const a1: Vec2 = [A[0][0], A[1][0]];
-  const a2: Vec2 = [A[0][1], A[1][1]];
   const fv = f[0] * v[0] + f[1] * v[1];
 
   const done = useLatch({
@@ -33,6 +46,8 @@ export const Ch03KernelImageLab: React.FC = () => {
     f3: tab === 'dual' && Math.abs(fv - 3) < 0.05,
     ker: tab === 'dual' && Math.abs(fv) < 0.03 && Math.hypot(v[0], v[1]) > 1,
   });
+
+  const ruleTex = `\\varphi(x, y) = x\\,\\varphi(\\boldsymbol{e}_1) + y\\,\\varphi(\\boldsymbol{e}_2) = \\bigl(${fmtLinearTerm(w1[0], w2[0])},\\; ${fmtLinearTerm(w1[1], w2[1])}\\bigr)`;
 
   return (
     <div className="space-y-4">
@@ -70,25 +85,25 @@ export const Ch03KernelImageLab: React.FC = () => {
                   }}
                 </Canvas2D>
               </Figure>
-              <Figure caption="陪域 W：拖动 Ae₁, Ae₂ 即改写 A" legend={<Swatch color={C.green} label="im φ" />}>
+              <Figure caption="陪域 W：拖动基向量像 φ(e₁), φ(e₂) 即确定映射 φ" legend={<Swatch color={C.green} label="im φ" />}>
                 <Canvas2D
                   range={3.5}
                   aspect={1}
                   ariaLabel="陪域"
                   handles={[
-                    { id: 'a1', pos: a1, color: C.ochre, label: 'Ae₁', onChange: (p) => setA([[p[0], A[0][1]], [p[1], A[1][1]]]) },
-                    { id: 'a2', pos: a2, color: C.ink2, label: 'Ae₂', onChange: (p) => setA([[A[0][0], p[0]], [A[1][0], p[1]]]) },
+                    { id: 'w1', pos: w1, color: C.ochre, label: 'φ(e₁)', onChange: setW1 },
+                    { id: 'w2', pos: w2, color: C.ink2, label: 'φ(e₂)', onChange: setW2 },
                   ]}
                 >
                   {({ toSvg, line, width, height }) => {
                     const o = toSvg([0, 0]);
-                    const dir = Math.hypot(a1[0], a1[1]) > 1e-6 ? a1 : a2;
+                    const dir = Math.hypot(w1[0], w1[1]) > 1e-6 ? w1 : w2;
                     return (
                       <g>
                         {rank === 2 && <rect width={width} height={height} fill={C.green} fillOpacity={0.07} />}
                         {rank === 1 && <line {...line([0, 0], dir)} stroke={C.green} strokeWidth={3} strokeOpacity={0.7} />}
-                        <SvgArrow from={o} to={toSvg(a1)} color={C.ochre} width={1.8} dashed />
-                        <SvgArrow from={o} to={toSvg(a2)} color={C.ink2} width={1.8} dashed />
+                        <SvgArrow from={o} to={toSvg(w1)} color={C.ochre} width={1.8} dashed />
+                        <SvgArrow from={o} to={toSvg(w2)} color={C.ink2} width={1.8} dashed />
                         <SvgArrow from={o} to={toSvg(y)} color={C.violet} width={2.8} />
                         <SvgPoint at={toSvg(y)} color={C.violet} r={4} />
                         <SvgLabel at={toSvg(y)} color={C.violet} dy={18}>φ(x)</SvgLabel>
@@ -101,8 +116,12 @@ export const Ch03KernelImageLab: React.FC = () => {
           }
           side={
             <>
-              <Panel title="线性映射 φ(x) = Ax">
-                <MatrixInput ariaLabel="矩阵 A" value={A} onChange={(m) => setA(m as Mat2)} colColors={[C.ochre, C.ink2]} />
+              <Panel title="由基像唯一确定线性映射 φ">
+                <VectorInput name="φ(e₁)" color={C.ochre} value={w1} onChange={(p) => setW1(p as Vec2)} />
+                <VectorInput name="φ(e₂)" color={C.ink2} value={w2} onChange={(p) => setW2(p as Vec2)} />
+                <MathBox>
+                  <Tex math={ruleTex} block />
+                </MathBox>
                 <VectorInput name="x" color={C.blue} value={x} onChange={(p) => setX(p as Vec2)} />
                 {k && rank === 1 && (
                   <SliderField
@@ -120,34 +139,40 @@ export const Ch03KernelImageLab: React.FC = () => {
                     }}
                   />
                 )}
-                <MathBox>
-                  <Tex block math={`\\dim\\operatorname{im}\\varphi + \\dim\\ker\\varphi = ${rank} + ${2 - rank} = 2`} />
-                  <Tex block math={`\\varphi(\\bm x) = (${fmt(y[0])},\\ ${fmt(y[1])})^{\\top}`} />
-                </MathBox>
-                <Status tone={rank === 2 ? 'ok' : 'info'}>
-                  {rank === 2 ? 'φ 是同构：ker φ = {0}，im φ = W。' : rank === 1 ? '秩 1：每条与核平行的直线（陪集）被压成 im φ 上的一个点。' : '零映射：ker φ = V。'}
-                </Status>
                 <Presets
                   items={[
-                    { label: '秩 1', onClick: () => setA([[1, 2], [0.5, 1]]) },
-                    { label: '投影到 x 轴', onClick: () => setA([[1, 0], [0, 0]]) },
-                    { label: '同构', onClick: () => setA([[1.2, -0.6], [0.5, 1.1]]) },
-                    { label: '零映射', onClick: () => setA([[0, 0], [0, 0]]) },
+                    { label: '压缩到直线（秩 1）', onClick: () => { setW1([1, 0.5]); setW2([2, 1]); } },
+                    { label: '向 x 轴投影', onClick: () => { setW1([1, 0]); setW2([0, 0]); } },
+                    { label: '可逆同构（秩 2）', onClick: () => { setW1([1.5, 0.4]); setW2([-0.5, 1.4]); } },
+                    { label: '零映射（秩 0）', onClick: () => { setW1([0, 0]); setW2([0, 0]); } },
                   ]}
                 />
               </Panel>
+
+              <Panel title="秩–零化度定理">
+                <MathBox>
+                  <Tex math={`\\dim(\\operatorname{im}\\varphi) + \\dim(\\ker\\varphi) = ${rank} + ${2 - rank} = 2 = \\dim V`} block />
+                  <Tex math={`\\varphi(\\boldsymbol{x}) = (${fmt(y[0])},\\; ${fmt(y[1])})`} block />
+                </MathBox>
+                <Status tone={rank === 2 ? 'ok' : 'info'}>
+                  {rank === 2 && 'ker φ = {0}：单射且满射，即线性同构。'}
+                  {rank === 1 && '一整条紫色陪集 x + ker φ 被压成陪域中同一个点 φ(x)（第一同构定理：V/ker φ ≅ im φ）。'}
+                  {rank === 0 && '零映射把整个定义域压成原点。'}
+                </Status>
+                <Note label="基像定理">
+                  线性映射只要给定一组基的像 <Tex math="\varphi(\boldsymbol{e}_1), \varphi(\boldsymbol{e}_2)" /> 就被完全确定，尚无需借助矩阵记号。
+                </Note>
+              </Panel>
+
               <Tasks
                 done={done}
                 items={[
-                  { id: 'rank1', label: '在右图拖动 Ae₂ 使它与 Ae₁ 共线，得到秩 1 映射。' },
-                  { id: 'slide', label: '秩 1 时，用滑块让 x 沿陪集移动，确认 φ(x) 不动。' },
-                  { id: 'iso', label: '恢复为同构（秩 2）。' },
-                  { id: 'zero', label: '构造零映射。' },
+                  { id: 'rank1', label: '在“秩 1”映射下拖动 x 离开核，观察紫色虚线陪集 x + ker φ' },
+                  { id: 'slide', label: '拖动“沿 ker φ 平移 x”滑块，确认陪域中的像 φ(x) 纹丝不动' },
+                  { id: 'iso', label: '使 φ(e₁) 与 φ(e₂) 线性无关（秩 2），观察核缩为原点、像铺满陪域' },
+                  { id: 'zero', label: '切换到零映射，验证 0 + 2 = 2' },
                 ]}
               />
-              <Note label="定理">
-                <Tex math="V/\ker\varphi \cong \operatorname{im}\varphi" />：陪集 <Tex math="\bm x + \ker\varphi" /> 与像中的点一一对应。
-              </Note>
             </>
           }
         />
@@ -155,39 +180,44 @@ export const Ch03KernelImageLab: React.FC = () => {
         <LabGrid
           stage={
             <Figure
-              caption="f 的等值线 f = c（c 取整数）；v 穿过的条数就是 f(v)。"
-              legend={<><Swatch color={C.violet} label="ker f" /><Swatch color={C.blue} label="v" /></>}
+              caption="线性泛函 f(v) = a x + b y 的几何形象是一族等间距平行等值线，深红线是零核 ker f。"
+              legend={<><Swatch color={C.red} label="ker f (f = 0)" /><Swatch color={C.blue} label="v" /></>}
             >
               <Canvas2D
                 range={4}
-                ariaLabel="线性泛函等值线"
-                handles={[
-                  { id: 'v', pos: v, color: C.blue, label: 'v', onChange: setV },
-                  { id: 'f', pos: f, color: C.violet, label: 'f 的梯度', onChange: setF },
-                ]}
+                handles={[{ id: 'v', pos: v, color: C.blue, label: 'v', onChange: setV }]}
+                ariaLabel="对偶泛函等值线"
               >
-                {({ toSvg, line, view }) => {
+                {({ toSvg, line }) => {
                   const o = toSvg([0, 0]);
                   const n2 = f[0] * f[0] + f[1] * f[1];
-                  const els: React.ReactNode[] = [];
-                  if (n2 > 0.01) {
-                    const cs = [view.xmin * f[0], view.xmax * f[0]].sort((a, b) => a - b);
-                    const ds = [view.ymin * f[1], view.ymax * f[1]].sort((a, b) => a - b);
-                    const lo = Math.floor(cs[0] + ds[0]);
-                    const hi = Math.ceil(cs[1] + ds[1]);
-                    for (let c = lo; c <= hi && hi - lo < 200; c++) {
-                      const p: Vec2 = [(c * f[0]) / n2, (c * f[1]) / n2];
-                      els.push(
-                        <line key={c} {...line(p, [-f[1], f[0]])} stroke={C.violet} strokeOpacity={c === 0 ? 0.9 : 0.28} strokeWidth={c === 0 ? 2.2 : 1.1} />
+                  const dir: Vec2 = [-f[1], f[0]];
+                  const lines: React.ReactNode[] = [];
+                  if (n2 > 1e-6) {
+                    for (let c = -6; c <= 6; c++) {
+                      const base: Vec2 = [(c * f[0]) / n2, (c * f[1]) / n2];
+                      const isZero = c === 0;
+                      lines.push(
+                        <line
+                          key={c}
+                          {...line(base, dir)}
+                          stroke={isZero ? C.red : C.violet}
+                          strokeWidth={isZero ? 2.4 : 1.1}
+                          strokeOpacity={isZero ? 0.9 : 0.45}
+                        />
                       );
-                      const lp = toSvg(p);
-                      if (c !== 0 && Math.abs(c) <= 8) els.push(<text key={`t${c}`} x={lp[0] + 4} y={lp[1] - 4} className="fig-tick" fill={C.violet}>{c}</text>);
+                      if (Math.abs(c) <= 4) {
+                        lines.push(
+                          <SvgLabel key={`l${c}`} at={toSvg(base)} color={isZero ? C.red : C.violet} size={11} dy={-4}>
+                            {c}
+                          </SvgLabel>
+                        );
+                      }
                     }
                   }
                   return (
                     <g>
-                      {els}
-                      <SvgArrow from={o} to={toSvg(f)} color={C.violet} width={2} dashed />
+                      {lines}
                       <SvgArrow from={o} to={toSvg(v)} color={C.blue} width={2.8} />
                     </g>
                   );
@@ -198,23 +228,22 @@ export const Ch03KernelImageLab: React.FC = () => {
           side={
             <>
               <Panel title="线性泛函 f ∈ V*">
-                <VectorInput name="f" color={C.violet} value={f} onChange={(p) => setF(p as Vec2)} />
+                <SliderField label="a（x 的系数）" value={f[0]} min={-2} max={2} step={0.1} color={C.violet} onChange={(val) => setF([val, f[1]])} />
+                <SliderField label="b（y 的系数）" value={f[1]} min={-2} max={2} step={0.1} color={C.violet} onChange={(val) => setF([f[0], val])} />
                 <VectorInput name="v" color={C.blue} value={v} onChange={(p) => setV(p as Vec2)} />
                 <MathBox>
-                  <Tex block math={`f(x,y) = ${fmt(f[0])}x ${f[1] >= 0 ? '+' : '-'} ${fmt(Math.abs(f[1]))}y,\\qquad f(\\bm v) = ${fmt(fv)}`} />
+                  <Tex math={`f(x,y) = ${fmtLinearTerm(f[0], f[1])}`} block />
+                  <Tex math={`f(\\boldsymbol{v}) = ${fmt(fv)}`} block />
                 </MathBox>
-                <p className="text-[14px] text-ink-2">
-                  f 越“大”，等值线越密。f 加倍时等值线间距减半——对偶空间中的伸缩与 V 中的伸缩方向相反。
-                </p>
+                <Note>线性泛函把向量“数”成实数：每穿过一条等值线，f(v) 就增加 1。</Note>
               </Panel>
               <Tasks
                 done={done}
                 items={[
-                  { id: 'f3', label: '移动 v，使 f(v) = 3。' },
-                  { id: 'ker', label: '找一个长度大于 1 的 v，使 f(v) = 0。' },
+                  { id: 'f3', label: '拖动 v 落在等值线 f(v) = 3 上' },
+                  { id: 'ker', label: '将非零向量 v 拖入 ker f（红色直线 f = 0）' },
                 ]}
               />
-              <Note>粗线是 ker f，它是 V 中的超平面（这里是直线）；不同的 f 若核相同，则只相差一个非零倍数。</Note>
             </>
           }
         />

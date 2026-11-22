@@ -28,7 +28,7 @@ CHAPTER_LAB = {
     1: "ch01-vectors3d",
     2: "ch02-span-basis",
     3: "ch03-kernel-image",
-    4: "ch04-basis-shadow",
+    4: "ch04-map-to-matrix",
     5: "ch05-determinant",
     6: "ch06-four-subspaces",
     7: "ch07-eigen-explorer",
