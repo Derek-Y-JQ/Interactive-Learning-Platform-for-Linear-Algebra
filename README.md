@@ -36,7 +36,7 @@
 
 ## 本地开发
 
-需要 Node.js 20 及以上。
+需要 Node.js 22 及以上（CI 使用 Node 24）。
 
 ```bash
 npm install
@@ -73,6 +73,8 @@ npm run sync-exercises
 
 推送到 `main` 分支后，GitHub Actions（`.github/workflows/deploy.yml`）会自动构建并发布到 GitHub Pages。
 
-## 版权
+## 版权与许可
 
-网站代码随本仓库开源。习题文本版权归教材作者与中山大学出版社所有。
+网站源代码以 [MIT 许可证](LICENSE) 发布。
+
+习题文本（`src/data/exercises.json`）及教材内容的版权归教材作者与中山大学出版社所有，不在 MIT 许可范围内。
