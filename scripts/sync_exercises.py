@@ -229,8 +229,7 @@ def parse_exercise_file(path: Path, chapter: int, section: int, sections: dict[i
 def main() -> None:
     aux = load_aux()
     structure = [c for c in chapter_structure() if c["files"]]
-    problems: list[dict] = []
-    chapters_out = []
+    all_ch_probs: list[tuple[dict, list[dict]]] = []
     for c in structure:
         ch_probs: list[dict] = []
         for path, sec in c["files"]:
@@ -238,6 +237,15 @@ def main() -> None:
         # section exercises first (book order), then review groups A, B, C, then MATLAB
         rank = {"A": 1, "B": 2, "C": 3, "M": 4}
         ch_probs.sort(key=lambda p: (p["isReview"], p["section"] if not p["isReview"] else rank.get(p["groupCode"], 9)))
+        # Harvest live exercise labels so newly added \label{...} resolve without needing a fresh main.aux
+        for p in ch_probs:
+            for lbl in re.findall(r"\\label\{([^}]+)\}", p["body"]):
+                aux[lbl] = (p["displayNum"], "exerciseproblemsi")
+        all_ch_probs.append((c, ch_probs))
+
+    problems: list[dict] = []
+    chapters_out = []
+    for c, ch_probs in all_ch_probs:
         groups = []
         for p in ch_probs:
             if not groups or groups[-1]["code"] != p["groupCode"]:
