@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bookmark, Check, ChevronDown, Search } from 'lucide-react';
 import exercisesData from '../data/exercises.json';
-import { SOLUTIONS } from '../data/solutions';
+import {
+  getCachedChapterSolutions,
+  loadChapterSolutions,
+  type ExerciseSolution,
+} from '../data/solutions';
 import { MathText } from '../components/MathText';
 import { Button, Segmented } from '../components/ui';
 import { LABS } from '../data/labs';
@@ -72,6 +76,30 @@ export const ExercisesPage: React.FC<ExercisesPageProps> = ({ initialChapter, on
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<Record<string, 'hint' | 'sol' | undefined>>({});
   const [progress, setProgress] = useState<ProgressState>(loadProgress);
+  const [chapterSols, setChapterSols] = useState<Record<string, ExerciseSolution>>(
+    () => getCachedChapterSolutions(initialChapter ?? 1) ?? {},
+  );
+  const [solsLoading, setSolsLoading] = useState(() => !getCachedChapterSolutions(initialChapter ?? 1));
+
+  useEffect(() => {
+    const cached = getCachedChapterSolutions(chapter);
+    if (cached) {
+      setChapterSols(cached);
+      setSolsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSolsLoading(true);
+    loadChapterSolutions(chapter).then((data) => {
+      if (!cancelled) {
+        setChapterSols(data);
+        setSolsLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chapter]);
 
   useEffect(() => {
     if (initialChapter && initialChapter >= 1 && initialChapter <= 11) {
@@ -184,7 +212,7 @@ export const ExercisesPage: React.FC<ExercisesPageProps> = ({ initialChapter, on
             <div className="text-[14px] text-ink-3">第 {info.chapter} 章 · 课后习题</div>
             <h1 className="text-[30px] sm:text-[36px] font-bold leading-tight">{info.title}</h1>
             <p className="text-[14px] text-ink-3 mt-1">
-              共 {info.count} 题，当前筛选 {filtered.length} 题。解答持续补充中。
+              共 {info.count} 题，当前筛选 {filtered.length} 题。全部习题均附完整解答。
             </p>
           </div>
 
@@ -236,7 +264,7 @@ export const ExercisesPage: React.FC<ExercisesPageProps> = ({ initialChapter, on
         ) : (
           <ol>
             {items.map((p, i) => {
-              const sol = SOLUTIONS[p.id];
+              const sol = chapterSols[p.id];
               const isDone = !!progress.done[p.id];
               const starred = !!progress.starred[p.id];
               const o = open[p.id];
@@ -287,19 +315,26 @@ export const ExercisesPage: React.FC<ExercisesPageProps> = ({ initialChapter, on
                     </div>
 
                     <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
-                      {(['hint', 'sol'] as const).map((k) => (
+                      {sol?.hint && (
                         <button
-                          key={k}
                           type="button"
-                          aria-expanded={o === k}
-                          onClick={() => setOpen((m) => ({ ...m, [p.id]: m[p.id] === k ? undefined : k }))}
-                          className={`inline-flex items-center gap-1 ${o === k ? 'text-ink font-bold' : 'text-primary hover:underline underline-offset-4'}`}
+                          aria-expanded={o === 'hint'}
+                          onClick={() => setOpen((m) => ({ ...m, [p.id]: m[p.id] === 'hint' ? undefined : 'hint' }))}
+                          className={`inline-flex items-center gap-1 ${o === 'hint' ? 'text-ink font-bold' : 'text-primary hover:underline underline-offset-4'}`}
                         >
-                          {k === 'hint' ? '提示' : '解答'}
-                          {k === 'sol' && !sol?.solution && <span className="text-ink-3 font-normal">（待补充）</span>}
-                          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${o === k ? 'rotate-180' : ''}`} />
+                          提示
+                          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${o === 'hint' ? 'rotate-180' : ''}`} />
                         </button>
-                      ))}
+                      )}
+                      <button
+                        type="button"
+                        aria-expanded={o === 'sol'}
+                        onClick={() => setOpen((m) => ({ ...m, [p.id]: m[p.id] === 'sol' ? undefined : 'sol' }))}
+                        className={`inline-flex items-center gap-1 ${o === 'sol' ? 'text-ink font-bold' : 'text-primary hover:underline underline-offset-4'}`}
+                      >
+                        解答
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${o === 'sol' ? 'rotate-180' : ''}`} />
+                      </button>
                       {lab && (
                         <a
                           href={`#/labs/${lab.id}`}
@@ -315,11 +350,10 @@ export const ExercisesPage: React.FC<ExercisesPageProps> = ({ initialChapter, on
                       <div className={`mt-3 pl-4 border-l-2 text-[15px] max-w-[46em] ${o === 'hint' ? 'border-accent' : 'border-primary'}`}>
                         {o === 'hint' ? (
                           sol?.hint ? <MathText text={sol.hint} /> : <p className="text-ink-3">本题提示尚在编写。</p>
+                        ) : solsLoading ? (
+                          <p className="text-ink-3">正在加载本章解答…</p>
                         ) : sol?.solution ? (
-                          <>
-                            <MathText text={sol.solution} />
-                            {sol.updatedAt && <p className="text-[12px] text-ink-3 mt-2">{sol.updatedAt}</p>}
-                          </>
+                          <MathText text={sol.solution} />
                         ) : (
                           <p className="text-ink-3">本题解答尚未录入。</p>
                         )}

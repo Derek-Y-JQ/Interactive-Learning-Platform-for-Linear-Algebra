@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "sync-exercises": "python3 scripts/sync_exercises.py"
+    "sync-exercises": "python3 scripts/sync_exercises.py",
+    "sync-solutions": "python3 scripts/sync_solutions.py",
+    "sync-all": "npm run sync-exercises && npm run sync-solutions"
   },
   "dependencies": {
     "katex": "^0.16.21",

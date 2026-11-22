@@ -22,6 +22,7 @@ const KATEX_MACROS: Record<string, string> = {
   '\\im': '\\operatorname{im}',
   '\\vg': '\\mathcal{#1}',
   '\\bm': '\\boldsymbol{#1}',
+  '\\Poly': '{#1}_{#2}[x]',
 };
 
 export function renderKatex(math: string, displayMode = false): string {
@@ -50,103 +51,210 @@ export const Tex: React.FC<{ math: string; block?: boolean; className?: string }
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 };
 
-interface Segment {
-  kind: 'text' | 'inline' | 'display' | 'code';
+interface AtomicBlock {
+  kind: 'code' | 'display';
   content: string;
 }
 
-function tokenizeMixedLatex(input: string): Segment[] {
-  const segments: Segment[] = [];
-  // First split fenced code blocks ```matlab ... ```
-  const codeRegex = /```(?:matlab)?\n([\s\S]*?)```/g;
-  let lastIdx = 0;
-  const chunks: { isCode: boolean; content: string }[] = [];
-  let cm: RegExpExecArray | null;
-  while ((cm = codeRegex.exec(input)) !== null) {
-    if (cm.index > lastIdx) {
-      chunks.push({ isCode: false, content: input.slice(lastIdx, cm.index) });
-    }
-    chunks.push({ isCode: true, content: cm[1] });
-    lastIdx = cm.index + cm[0].length;
-  }
-  if (lastIdx < input.length) {
-    chunks.push({ isCode: false, content: input.slice(lastIdx) });
-  }
+type ParsedBlock =
+  | { kind: 'code'; content: string }
+  | { kind: 'display'; content: string }
+  | { kind: 'list'; items: string[] }
+  | { kind: 'paragraph'; content: string };
 
-  // Tokenize math inside non-code chunks
-  const mathRegex = /(\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\$(?:\\.|[^$\\])+\$)/g;
-  for (const chunk of chunks) {
-    if (chunk.isCode) {
-      segments.push({ kind: 'code', content: chunk.content });
+const SENTINEL_PREFIX = '\uE000BLK';
+const SENTINEL_SUFFIX = '\uE001';
+const SENTINEL_RE = /\uE000BLK(\d+)\uE001/g;
+
+function parseBlocks(input: string): { blocks: ParsedBlock[]; atoms: AtomicBlock[] } {
+  const atoms: AtomicBlock[] = [];
+  const stash = (kind: 'code' | 'display', content: string) => {
+    const idx = atoms.length;
+    atoms.push({ kind, content });
+    return `\n\n${SENTINEL_PREFIX}${idx}${SENTINEL_SUFFIX}\n\n`;
+  };
+
+  // 1. Protect fenced code blocks first so math inside code is untouched
+  let text = input.replace(/\r\n/g, '\n').replace(/```[\w-]*\n([\s\S]*?)```/g, (_, code: string) =>
+    stash('code', code.replace(/\n$/, '')),
+  );
+
+  // 2. Protect display math ($$ ... $$ and \[ ... \])
+  text = text.replace(/\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$/g, (_, m1?: string, m2?: string) =>
+    stash('display', (m1 ?? m2 ?? '').trim()),
+  );
+
+  // 3. Split into paragraph-level chunks on blank lines
+  const rawChunks = text
+    .split(/\n{2,}/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  const blocks: ParsedBlock[] = [];
+  for (const chunk of rawChunks) {
+    const exact = chunk.match(/^\uE000BLK(\d+)\uE001$/);
+    if (exact) {
+      const atom = atoms[Number(exact[1])];
+      blocks.push({ kind: atom.kind, content: atom.content });
       continue;
     }
-    let idx = 0;
-    let m: RegExpExecArray | null;
-    while ((m = mathRegex.exec(chunk.content)) !== null) {
-      if (m.index > idx) {
-        segments.push({ kind: 'text', content: chunk.content.slice(idx, m.index) });
+
+    const lines = chunk.split('\n');
+    const isBulletList = lines.every((l) => /^\s*[-*]\s+/.test(l));
+    if (isBulletList) {
+      blocks.push({
+        kind: 'list',
+        items: lines.map((l) => l.replace(/^\s*[-*]\s+/, '').trim()),
+      });
+      continue;
+    }
+
+    // Handle mixed prose + bullet lines inside a single chunk (no blank line before list)
+    let paraLines: string[] = [];
+    let listItems: string[] = [];
+    const flushPara = () => {
+      if (paraLines.length > 0) {
+        blocks.push({ kind: 'paragraph', content: paraLines.join('\n') });
+        paraLines = [];
       }
-      const token = m[0];
-      if (token.startsWith('\\[')) {
-        segments.push({ kind: 'display', content: token.slice(2, -2).trim() });
-      } else if (token.startsWith('$$')) {
-        segments.push({ kind: 'display', content: token.slice(2, -2).trim() });
+    };
+    const flushList = () => {
+      if (listItems.length > 0) {
+        blocks.push({ kind: 'list', items: listItems });
+        listItems = [];
+      }
+    };
+
+    for (const line of lines) {
+      if (/^\s*[-*]\s+/.test(line)) {
+        flushPara();
+        listItems.push(line.replace(/^\s*[-*]\s+/, '').trim());
       } else {
-        segments.push({ kind: 'inline', content: token.slice(1, -1).trim() });
+        flushList();
+        paraLines.push(line);
       }
-      idx = m.index + token.length;
     }
-    if (idx < chunk.content.length) {
-      segments.push({ kind: 'text', content: chunk.content.slice(idx) });
-    }
+    flushPara();
+    flushList();
   }
-  return segments;
+
+  return { blocks, atoms };
+}
+
+function renderInline(text: string, keyPrefix: string, allowBold = true): React.ReactNode[] {
+  // Match inline math $...$, inline code `...`, **bold** (may contain inline math), or *italic*
+  const inlineRe = allowBold
+    ? /(\$(?:\\.|[^$\\])+\$|`[^`]+`|\*\*(?:(?:\$(?:\\.|[^$\\])+\$)|[^*])+\*\*|\*[^*\n]+\*)/g
+    : /(\$(?:\\.|[^$\\])+\$|`[^`]+`|\*[^*\n]+\*)/g;
+
+  const nodes: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+
+  while ((m = inlineRe.exec(text)) !== null) {
+    if (m.index > lastIdx) {
+      nodes.push(<React.Fragment key={`${keyPrefix}-t${k++}`}>{text.slice(lastIdx, m.index)}</React.Fragment>);
+    }
+    const token = m[0];
+    if (token.startsWith('$') && token.endsWith('$')) {
+      nodes.push(<Tex key={`${keyPrefix}-m${k++}`} math={token.slice(1, -1).trim()} />);
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      nodes.push(
+        <code
+          key={`${keyPrefix}-c${k++}`}
+          className="px-1 py-0.5 rounded-sm bg-sunken text-primary text-[0.9em] font-mono"
+        >
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else if (token.startsWith('**') && token.endsWith('**')) {
+      nodes.push(
+        <strong key={`${keyPrefix}-b${k++}`} className="font-bold text-ink">
+          {renderInline(token.slice(2, -2), `${keyPrefix}-bi${k}`, false)}
+        </strong>,
+      );
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      nodes.push(
+        <em key={`${keyPrefix}-i${k++}`} className="italic">
+          {token.slice(1, -1)}
+        </em>,
+      );
+    } else {
+      nodes.push(<React.Fragment key={`${keyPrefix}-r${k++}`}>{token}</React.Fragment>);
+    }
+    lastIdx = m.index + token.length;
+  }
+
+  if (lastIdx < text.length) {
+    nodes.push(<React.Fragment key={`${keyPrefix}-e`}>{text.slice(lastIdx)}</React.Fragment>);
+  }
+  return nodes;
+}
+
+function renderWithAtoms(text: string, atoms: AtomicBlock[], keyPrefix: string): React.ReactNode {
+  if (!SENTINEL_RE.test(text)) {
+    return renderInline(text, keyPrefix);
+  }
+  SENTINEL_RE.lastIndex = 0;
+  const parts: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = SENTINEL_RE.exec(text)) !== null) {
+    if (m.index > lastIdx) {
+      parts.push(<React.Fragment key={`${keyPrefix}-p${k++}`}>{renderInline(text.slice(lastIdx, m.index), `${keyPrefix}-pi${k}`)}</React.Fragment>);
+    }
+    const atom = atoms[Number(m[1])];
+    if (atom.kind === 'display') {
+      parts.push(<Tex key={`${keyPrefix}-d${k++}`} math={atom.content} block />);
+    } else {
+      parts.push(
+        <pre
+          key={`${keyPrefix}-cb${k++}`}
+          className="my-2.5 rounded-md bg-ink text-paper p-3 text-[13px] font-mono overflow-x-auto leading-relaxed"
+        >
+          <code>{atom.content}</code>
+        </pre>,
+      );
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) {
+    parts.push(<React.Fragment key={`${keyPrefix}-pe`}>{renderInline(text.slice(lastIdx), `${keyPrefix}-pei`)}</React.Fragment>);
+  }
+  return parts;
 }
 
 export const MathText: React.FC<{ text: string; className?: string }> = ({ text, className = '' }) => {
-  const segments = useMemo(() => tokenizeMixedLatex(text), [text]);
+  const { blocks, atoms } = useMemo(() => parseBlocks(text), [text]);
 
   return (
-    <div className={`leading-relaxed break-words ${className}`}>
-      {segments.map((seg, i) => {
-        if (seg.kind === 'display') {
-          return <Tex key={i} math={seg.content} block />;
+    <div className={`leading-relaxed break-words space-y-2.5 ${className}`}>
+      {blocks.map((block, i) => {
+        if (block.kind === 'display') {
+          return <Tex key={i} math={block.content} block />;
         }
-        if (seg.kind === 'inline') {
-          return <Tex key={i} math={seg.content} />;
-        }
-        if (seg.kind === 'code') {
+        if (block.kind === 'code') {
           return (
             <pre
               key={i}
               className="my-2.5 rounded-md bg-ink text-paper p-3 text-[13px] font-mono overflow-x-auto leading-relaxed"
             >
-              <code>{seg.content}</code>
+              <code>{block.content}</code>
             </pre>
           );
         }
-        // Simple inline formatting for **bold**, *italic*, `code`
-        const parts = seg.content.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
-        return (
-          <React.Fragment key={i}>
-            {parts.map((p, j) => {
-              if (p.startsWith('**') && p.endsWith('**')) {
-                return <strong key={j} className="font-bold text-ink">{p.slice(2, -2)}</strong>;
-              }
-              if (p.startsWith('*') && p.endsWith('*')) {
-                return <em key={j} className="italic">{p.slice(1, -1)}</em>;
-              }
-              if (p.startsWith('`') && p.endsWith('`')) {
-                return (
-                  <code key={j} className="px-1 py-0.5 rounded-sm bg-sunken text-primary text-[0.9em] font-mono">
-                    {p.slice(1, -1)}
-                  </code>
-                );
-              }
-              return <React.Fragment key={j}>{p}</React.Fragment>;
-            })}
-          </React.Fragment>
-        );
+        if (block.kind === 'list') {
+          return (
+            <ul key={i} className="list-disc pl-5 space-y-1.5">
+              {block.items.map((item, j) => (
+                <li key={j}>{renderWithAtoms(item, atoms, `l${i}-${j}`)}</li>
+              ))}
+            </ul>
+          );
+        }
+        return <div key={i}>{renderWithAtoms(block.content, atoms, `p${i}`)}</div>;
       })}
     </div>
   );
